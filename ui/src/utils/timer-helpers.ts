@@ -94,3 +94,24 @@ export function shiftAnchorDate(currentDateStr: string, period: SummaryPeriod, d
   const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
 }
+
+export function normalizeTimerState(t: TimerState): TimerState {
+  if (t.status === 'running' && typeof t.endTimeMs === 'number') {
+    return {
+      ...t,
+      remainingSec: Math.max(0, Math.round((t.endTimeMs - Date.now()) / 1000)),
+    };
+  }
+  return t;
+}
+
+export function isSameTimerState(a: TimerState, b: TimerState): boolean {
+  return (
+    a.mode === b.mode &&
+    a.status === b.status &&
+    a.remainingSec === b.remainingSec &&
+    a.endTimeMs === b.endTimeMs &&
+    a.completedCount === b.completedCount &&
+    a.activeTaskId === b.activeTaskId
+  );
+}

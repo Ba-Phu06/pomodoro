@@ -610,4 +610,32 @@ test("Pomodoro MCP Server - stdio JSON-RPC suite", async (t) => {
       }
     }
   });
+
+  await t.test("17. pomodoro_get_state computes live remainingSec from endTimeMs when running", async () => {
+    const endTimeMs = Date.now() + 600_000;
+    await client.request("tools/call", {
+      name: "pomodoro_save_timer",
+      arguments: {
+        timer: {
+          mode: "pomodoro",
+          status: "running",
+          remainingSec: 1500,
+          endTimeMs,
+          completedCount: 0,
+          activeTaskId: null,
+        },
+      },
+    });
+
+    const stateRes = await client.request("tools/call", {
+      name: "pomodoro_get_state",
+      arguments: {},
+    });
+    const timer = stateRes.structuredContent.timer;
+    assert.equal(timer.status, "running");
+    assert.ok(
+      timer.remainingSec >= 595 && timer.remainingSec <= 605,
+      `Expected live remainingSec near 600, got ${timer.remainingSec}`
+    );
+  });
 });

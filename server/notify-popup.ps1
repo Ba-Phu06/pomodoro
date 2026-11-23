@@ -4,7 +4,9 @@ param(
   [string]$AccentHex = "#E05A4F",
   [string]$Sound = "bell",
   [double]$Volume = 0.8,
-  [int]$DurationSec = 8
+  [int]$DurationSec = 12,
+  [string]$DataFile = "",
+  [string]$ActionLabelB64 = ""
 )
 
 $ErrorActionPreference = "SilentlyContinue"
@@ -76,15 +78,75 @@ function Play-SynthesizedWav([string]$kind, [double]$vol) {
 
 $titleText = Decode-B64 $TitleB64
 $bodyText = Decode-B64 $BodyB64
+$actionLabel = if ($ActionLabelB64) { Decode-B64 $ActionLabelB64 } else { "" }
+
+try {
+  Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class PomodoroWin32 {
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
+}
+"@ -ErrorAction SilentlyContinue
+} catch {}
+
+function Focus-AntigravityWindow {
+  try {
+    $procs = Get-Process | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero -and $_.ProcessName -match "Antigravity" }
+    if (-not $procs) {
+      $procs = Get-Process | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero -and $_.MainWindowTitle -match "Antigravity|Pomodoro" }
+    }
+    $target = $procs | Select-Object -First 1
+    if ($target) {
+      $hwnd = $target.MainWindowHandle
+      if ([PomodoroWin32]::IsIconic($hwnd)) { [void][PomodoroWin32]::ShowWindowAsync($hwnd, 9) }
+      [void][PomodoroWin32]::SetForegroundWindow($hwnd)
+    }
+  } catch {}
+}
+
+function Start-NextSessionFromFile {
+  if ([string]::IsNullOrWhiteSpace($DataFile) -or -not (Test-Path $DataFile)) { return }
+  try {
+    $raw = [System.IO.File]::ReadAllText($DataFile, [System.Text.UTF8Encoding]::new($false))
+    if ([string]::IsNullOrWhiteSpace($raw)) { return }
+    $data = $raw | ConvertFrom-Json
+    if ($null -eq $data -or $null -eq $data.timer) { return }
+    if ($data.timer.status -eq "running") { return }
+
+    $rem = [int]$data.timer.remainingSec
+    if ($rem -le 0) {
+      $modeMin = switch ($data.timer.mode) {
+        "short_break" { if ($data.settings.shortBreakMin) { [int]$data.settings.shortBreakMin } else { 5 } }
+        "long_break"  { if ($data.settings.longBreakMin)  { [int]$data.settings.longBreakMin }  else { 15 } }
+        default       { if ($data.settings.pomodoroMin)   { [int]$data.settings.pomodoroMin }   else { 25 } }
+      }
+      $rem = $modeMin * 60
+    }
+    $nowMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+    $data.timer.status = "running"
+    $data.timer.remainingSec = $rem
+    $data.timer.endTimeMs = $nowMs + ($rem * 1000)
+
+    $tmp = "$DataFile.notify.$([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()).tmp"
+    [System.IO.File]::WriteAllText($tmp, ($data | ConvertTo-Json -Depth 12), [System.Text.UTF8Encoding]::new($false))
+    Move-Item -Path $tmp -Destination $DataFile -Force
+  } catch {}
+}
+
+$winHeight = if ($actionLabel) { 126 } else { 96 }
+$topOffset = $winHeight + 12
 
 $xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Pomodoro Notification" Width="344" Height="96"
+        Title="Pomodoro Notification" Width="348" Height="$winHeight"
         WindowStyle="None" AllowsTransparency="True" Background="Transparent"
         Topmost="True" ShowInTaskbar="False" ShowActivated="False" ResizeMode="NoResize">
   <Border x:Name="Card" CornerRadius="12" Background="#F51B1B22"
-          BorderBrush="#353542" BorderThickness="1.2" Margin="4">
+          BorderBrush="#353542" BorderThickness="1.2" Margin="4" Cursor="Hand">
     <Border.Effect>
       <DropShadowEffect BlurRadius="14" ShadowDepth="3" Opacity="0.55" Color="#000000"/>
     </Border.Effect>
@@ -100,6 +162,15 @@ $xaml = @"
                    FontSize="14" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
         <TextBlock x:Name="BodyBlock" Foreground="#CBD5E1" FontFamily="Segoe UI"
                    FontSize="12" TextWrapping="Wrap" Margin="0,4,0,0"/>
+        <Button x:Name="ActionBtn" Visibility="Collapsed" HorizontalAlignment="Left"
+                Margin="0,8,0,0" Padding="10,4" Foreground="#FFFFFF" Background="$AccentHex"
+                BorderThickness="0" FontFamily="Segoe UI" FontSize="11.5" FontWeight="SemiBold" Cursor="Hand">
+          <Button.Resources>
+            <Style TargetType="Border">
+              <Setter Property="CornerRadius" Value="6"/>
+            </Style>
+          </Button.Resources>
+        </Button>
       </StackPanel>
       <Button x:Name="CloseBtn" Grid.Column="2" Content="&#10005;" Width="24" Height="24"
               VerticalAlignment="Top" Margin="0,6,6,0" Foreground="#94A3B8"
@@ -111,13 +182,41 @@ $xaml = @"
 
 $window = [Windows.Markup.XamlReader]::Load([System.Xml.XmlReader]::Create([System.IO.StringReader]::new($xaml)))
 $workArea = [System.Windows.SystemParameters]::WorkArea
-$window.Left = $workArea.Right - 356
-$window.Top = $workArea.Bottom - 108
+$window.Left = $workArea.Right - 360
+$window.Top = $workArea.Bottom - $topOffset
 
 $window.FindName("TitleBlock").Text = $titleText
 $window.FindName("BodyBlock").Text = $bodyText
-$window.FindName("CloseBtn").Add_Click({ $window.Close() })
-$window.FindName("Card").Add_MouseLeftButtonUp({ $window.Close() })
+
+$closeBtn = $window.FindName("CloseBtn")
+$actionBtn = $window.FindName("ActionBtn")
+$card = $window.FindName("Card")
+
+if ($actionLabel) {
+  $actionBtn.Content = [string][char]0x25B6 + " " + $actionLabel
+  $actionBtn.Visibility = [System.Windows.Visibility]::Visible
+}
+
+$actionBtn.Add_Click({
+  param($s, $e)
+  $e.Handled = $true
+  Start-NextSessionFromFile
+  Focus-AntigravityWindow
+  $window.Close()
+})
+
+$closeBtn.Add_Click({
+  param($s, $e)
+  $e.Handled = $true
+  $window.Close()
+})
+
+$card.Add_MouseLeftButtonUp({
+  param($s, $e)
+  if ($e.OriginalSource -eq $closeBtn -or $e.OriginalSource -eq $actionBtn) { return }
+  Focus-AntigravityWindow
+  $window.Close()
+})
 
 $closeTimer = [System.Windows.Threading.DispatcherTimer]::new()
 $closeTimer.Interval = [TimeSpan]::FromSeconds([Math]::Max(3, $DurationSec))

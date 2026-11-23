@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { AppSnapshot, FocusSession, SummaryPeriod } from "../shared/types.js";
+import { AppSnapshot, FocusSession, SummaryPeriod, TimerState } from "../shared/types.js";
 import { PomodoroStorage } from "./storage.js";
 import { syncCalendarTasks } from "./calendar-sync.js";
 import { computeSummary } from "./summary.js";
@@ -33,11 +33,21 @@ function getAppHtml(): string {
   return "<!DOCTYPE html><html><body><p>Pomodoro App</p></body></html>";
 }
 
+function resolveLiveTimer(timer: TimerState): TimerState {
+  if (timer.status === "running" && typeof timer.endTimeMs === "number") {
+    return {
+      ...timer,
+      remainingSec: Math.max(0, Math.round((timer.endTimeMs - Date.now()) / 1000)),
+    };
+  }
+  return timer;
+}
+
 function buildSnapshot(storage: PomodoroStorage, tab: "timer" | "summary" | "settings" = "timer"): AppSnapshot {
   const data = storage.loadData();
   return {
     initialTab: tab,
-    timer: data.timer,
+    timer: resolveLiveTimer(data.timer),
     tasks: data.tasks,
     settings: data.settings,
     summary: computeSummary(data, "week"),
@@ -136,7 +146,10 @@ export function registerPomodoroTools(server: McpServer, storage: PomodoroStorag
         storage.saveData(data);
         if (!isManual && !raw.completedAt) {
           const next = getNextModeInfo(data, session.mode);
-          maybeNotifyCompletion(data, session.mode, session.durationMinutes, next.nextMinutes);
+          maybeNotifyCompletion(data, session.mode, session.durationMinutes, next.nextMinutes, {
+            dataFile: path.join(storage.getDataDir(), "pomodoro-data.json"),
+            autoStart: next.autoStart,
+          });
         }
       }
       const summary = computeSummary(data, "week");
@@ -242,7 +255,7 @@ export function registerPomodoroTools(server: McpServer, storage: PomodoroStorag
         content: [{ type: "text", text: result.ok ? "OK" : "SYNC_PARTIAL_ERROR" }],
         structuredContent: {
           ...result,
-          timer: data.timer,
+          timer: resolveLiveTimer(data.timer),
         } as unknown as Record<string, unknown>,
       };
     }
@@ -279,6 +292,7 @@ export function registerPomodoroTools(server: McpServer, storage: PomodoroStorag
         mode: data.timer.mode || "pomodoro",
         sound: data.settings.sound || "bell",
         volume: data.settings.volume ?? 0.8,
+        dataFile: path.join(storage.getDataDir(), "pomodoro-data.json"),
       });
       return { content: [{ type: "text", text: "Test notification triggered." }], structuredContent: { ok: true } };
     }

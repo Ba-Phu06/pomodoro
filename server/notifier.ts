@@ -66,6 +66,8 @@ export function showDesktopNotification(opts: {
   mode: TimerMode;
   sound: BellSound;
   volume: number;
+  dataFile?: string;
+  actionLabel?: string;
 }): boolean {
   if (process.platform !== "win32" || process.env.POMODORO_DISABLE_GUI === "1") return false;
   const scriptPath = getPopupScriptPath();
@@ -73,17 +75,20 @@ export function showDesktopNotification(opts: {
 
   const titleB64 = Buffer.from(opts.title, "utf-8").toString("base64");
   const bodyB64 = Buffer.from(opts.body, "utf-8").toString("base64");
-  const child = spawn(
-    "powershell.exe",
-    [
-      "-NoProfile", "-WindowStyle", "Hidden", "-STA", "-ExecutionPolicy", "Bypass",
-      "-File", scriptPath,
-      "-TitleB64", titleB64, "-BodyB64", bodyB64,
-      "-AccentHex", getAccentHex(opts.mode),
-      "-Sound", opts.sound, "-Volume", String(opts.volume),
-    ],
-    { detached: false, stdio: "ignore", windowsHide: true }
-  );
+  const args = [
+    "-NoProfile", "-WindowStyle", "Hidden", "-STA", "-ExecutionPolicy", "Bypass",
+    "-File", scriptPath,
+    "-TitleB64", titleB64, "-BodyB64", bodyB64,
+    "-AccentHex", getAccentHex(opts.mode),
+    "-Sound", opts.sound, "-Volume", String(opts.volume),
+  ];
+  if (opts.dataFile) {
+    args.push("-DataFile", opts.dataFile);
+  }
+  if (opts.actionLabel) {
+    args.push("-ActionLabelB64", Buffer.from(opts.actionLabel, "utf-8").toString("base64"));
+  }
+  const child = spawn("powershell.exe", args, { detached: false, stdio: "ignore", windowsHide: true });
   return Boolean(child.pid);
 }
 
@@ -91,18 +96,26 @@ export function maybeNotifyCompletion(
   data: PomodoroStorageData,
   finishedMode: TimerMode,
   durationMinutes: number,
-  nextMinutes: number
+  nextMinutes: number,
+  opts?: { dataFile?: string; autoStart?: boolean }
 ): void {
   const now = Date.now();
   if (now - lastNotifyMs < 6000) return;
   lastNotifyMs = now;
   const alert = getCompletionAlertText(finishedMode, durationMinutes, nextMinutes);
+  const actionLabel = !opts?.autoStart
+    ? (finishedMode === "pomodoro"
+      ? `Bắt đầu nghỉ (${nextMinutes}p)`
+      : `Bắt đầu tập trung (${nextMinutes}p)`)
+    : undefined;
   showDesktopNotification({
     title: alert.title,
     body: alert.body,
     mode: finishedMode,
     sound: data.settings.sound || "bell",
     volume: data.settings.volume ?? 0.8,
+    dataFile: opts?.dataFile,
+    actionLabel,
   });
 }
 
@@ -151,7 +164,10 @@ function handleExpiredTimer(storage: PomodoroStorage): void {
     activeTaskId: t.activeTaskId,
   };
   storage.saveData(data);
-  maybeNotifyCompletion(data, finishedMode, durMin, next.nextMinutes);
+  maybeNotifyCompletion(data, finishedMode, durMin, next.nextMinutes, {
+    dataFile: path.join(storage.getDataDir(), "pomodoro-data.json"),
+    autoStart: next.autoStart,
+  });
 }
 
 export function startTimerWatcher(storage: PomodoroStorage): NodeJS.Timeout {

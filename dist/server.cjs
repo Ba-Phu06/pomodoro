@@ -37605,43 +37605,49 @@ function showDesktopNotification(opts) {
   if (!import_node_fs3.default.existsSync(scriptPath)) return false;
   const titleB64 = Buffer.from(opts.title, "utf-8").toString("base64");
   const bodyB64 = Buffer.from(opts.body, "utf-8").toString("base64");
-  const child = (0, import_node_child_process2.spawn)(
-    "powershell.exe",
-    [
-      "-NoProfile",
-      "-WindowStyle",
-      "Hidden",
-      "-STA",
-      "-ExecutionPolicy",
-      "Bypass",
-      "-File",
-      scriptPath,
-      "-TitleB64",
-      titleB64,
-      "-BodyB64",
-      bodyB64,
-      "-AccentHex",
-      getAccentHex(opts.mode),
-      "-Sound",
-      opts.sound,
-      "-Volume",
-      String(opts.volume)
-    ],
-    { detached: false, stdio: "ignore", windowsHide: true }
-  );
+  const args = [
+    "-NoProfile",
+    "-WindowStyle",
+    "Hidden",
+    "-STA",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    scriptPath,
+    "-TitleB64",
+    titleB64,
+    "-BodyB64",
+    bodyB64,
+    "-AccentHex",
+    getAccentHex(opts.mode),
+    "-Sound",
+    opts.sound,
+    "-Volume",
+    String(opts.volume)
+  ];
+  if (opts.dataFile) {
+    args.push("-DataFile", opts.dataFile);
+  }
+  if (opts.actionLabel) {
+    args.push("-ActionLabelB64", Buffer.from(opts.actionLabel, "utf-8").toString("base64"));
+  }
+  const child = (0, import_node_child_process2.spawn)("powershell.exe", args, { detached: false, stdio: "ignore", windowsHide: true });
   return Boolean(child.pid);
 }
-function maybeNotifyCompletion(data, finishedMode, durationMinutes, nextMinutes) {
+function maybeNotifyCompletion(data, finishedMode, durationMinutes, nextMinutes, opts) {
   const now = Date.now();
   if (now - lastNotifyMs < 6e3) return;
   lastNotifyMs = now;
   const alert = getCompletionAlertText(finishedMode, durationMinutes, nextMinutes);
+  const actionLabel = !opts?.autoStart ? finishedMode === "pomodoro" ? `B\u1EAFt \u0111\u1EA7u ngh\u1EC9 (${nextMinutes}p)` : `B\u1EAFt \u0111\u1EA7u t\u1EADp trung (${nextMinutes}p)` : void 0;
   showDesktopNotification({
     title: alert.title,
     body: alert.body,
     mode: finishedMode,
     sound: data.settings.sound || "bell",
-    volume: data.settings.volume ?? 0.8
+    volume: data.settings.volume ?? 0.8,
+    dataFile: opts?.dataFile,
+    actionLabel
   });
 }
 function hasRecentSession(data, mode, windowMs = 6e3) {
@@ -37685,7 +37691,10 @@ function handleExpiredTimer(storage) {
     activeTaskId: t.activeTaskId
   };
   storage.saveData(data);
-  maybeNotifyCompletion(data, finishedMode, durMin, next.nextMinutes);
+  maybeNotifyCompletion(data, finishedMode, durMin, next.nextMinutes, {
+    dataFile: import_node_path3.default.join(storage.getDataDir(), "pomodoro-data.json"),
+    autoStart: next.autoStart
+  });
 }
 function startTimerWatcher(storage) {
   const handle = setInterval(() => {
@@ -37778,11 +37787,20 @@ function getAppHtml() {
   if (import_node_fs4.default.existsSync(inDist)) return import_node_fs4.default.readFileSync(inDist, "utf-8");
   return "<!DOCTYPE html><html><body><p>Pomodoro App</p></body></html>";
 }
+function resolveLiveTimer(timer) {
+  if (timer.status === "running" && typeof timer.endTimeMs === "number") {
+    return {
+      ...timer,
+      remainingSec: Math.max(0, Math.round((timer.endTimeMs - Date.now()) / 1e3))
+    };
+  }
+  return timer;
+}
 function buildSnapshot(storage, tab = "timer") {
   const data = storage.loadData();
   return {
     initialTab: tab,
-    timer: data.timer,
+    timer: resolveLiveTimer(data.timer),
     tasks: data.tasks,
     settings: data.settings,
     summary: computeSummary(data, "week"),
@@ -37876,7 +37894,10 @@ function registerPomodoroTools(server, storage) {
         storage.saveData(data);
         if (!isManual && !raw.completedAt) {
           const next = getNextModeInfo(data, session.mode);
-          maybeNotifyCompletion(data, session.mode, session.durationMinutes, next.nextMinutes);
+          maybeNotifyCompletion(data, session.mode, session.durationMinutes, next.nextMinutes, {
+            dataFile: import_node_path4.default.join(storage.getDataDir(), "pomodoro-data.json"),
+            autoStart: next.autoStart
+          });
         }
       }
       const summary = computeSummary(data, "week");
@@ -37976,7 +37997,7 @@ function registerPomodoroTools(server, storage) {
         content: [{ type: "text", text: result.ok ? "OK" : "SYNC_PARTIAL_ERROR" }],
         structuredContent: {
           ...result,
-          timer: data.timer
+          timer: resolveLiveTimer(data.timer)
         }
       };
     }
@@ -38008,7 +38029,8 @@ function registerPomodoroTools(server, storage) {
         body: "Chu\xF4ng v\xE0 th\xF4ng b\xE1o Pomodoro \u0111\xE3 s\u1EB5n s\xE0ng ho\u1EA1t \u0111\u1ED9ng khi h\u1EBFt gi\u1EDD!",
         mode: data.timer.mode || "pomodoro",
         sound: data.settings.sound || "bell",
-        volume: data.settings.volume ?? 0.8
+        volume: data.settings.volume ?? 0.8,
+        dataFile: import_node_path4.default.join(storage.getDataDir(), "pomodoro-data.json")
       });
       return { content: [{ type: "text", text: "Test notification triggered." }], structuredContent: { ok: true } };
     }

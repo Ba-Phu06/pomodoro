@@ -2,7 +2,7 @@ import React, { createContext, useContext, useEffect, useState, useRef, useCallb
 import { TimerMode, TimerState, TaskItem, PomodoroSettings, SummaryResponse, SummaryPeriod, AppSnapshot, CalendarSyncStatus, DEFAULT_CALENDAR_SYNC } from '../types';
 import { unlockAudio, playBell } from '../utils/audio';
 import { mcpBridge, callAppTool } from '../utils/mcp-client';
-import { FALLBACK_SNAPSHOT, getDurationSecForMode, getNextModeTransition, shiftAnchorDate } from '../utils/timer-helpers';
+import { FALLBACK_SNAPSHOT, getDurationSecForMode, getNextModeTransition, shiftAnchorDate, normalizeTimerState, isSameTimerState } from '../utils/timer-helpers';
 import { getTodayLocalKey } from '../utils/format';
 import { PomodoroContextValue } from './context-types';
 import { createNewTask, updateTaskDone, removeTask, fetchSummaryPeriod, persistUpdatedSession, persistDeletedSession, recordManualSession, queryMiniPillStatus, toggleMiniPillTool, syncGoogleCalendarTool } from './data-actions';
@@ -30,14 +30,19 @@ export const PomodoroProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const tasksRef = useRef(tasks);
   tasksRef.current = tasks;
 
+  const applyTimerSnapshot = useCallback((incoming: TimerState) => {
+    const normalized = normalizeTimerState(incoming);
+    setTimer((prev) => (isSameTimerState(prev, normalized) ? prev : normalized));
+  }, []);
+
   const handleSnapshot = useCallback((snap: Partial<AppSnapshot>) => {
     if (snap.initialTab) setTab(snap.initialTab);
-    if (snap.timer) setTimer(snap.timer);
+    if (snap.timer) applyTimerSnapshot(snap.timer);
     if (snap.tasks) setTasks(snap.tasks);
     if (snap.settings) setSettings(snap.settings);
     if (snap.summary) setSummary(snap.summary);
     if (snap.calendarSync) setCalendarSync(snap.calendarSync);
-  }, []);
+  }, [applyTimerSnapshot]);
 
   const syncCalendarTasks = useCallback(async (silent = false) => {
     if (!mcpBridge.isConnected()) {
@@ -51,7 +56,7 @@ export const PomodoroProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       if (!res) return;
       setTasks(res.tasks);
       setCalendarSync(res.calendarSync);
-      if (res.timer) setTimer(res.timer);
+      if (res.timer) applyTimerSnapshot(res.timer);
       const errCount = Object.keys(res.calendarSync.errors || {}).length;
       if (errCount > 0) {
         setSyncError(`Có ${errCount} lịch đồng bộ lỗi. Kiểm tra link .ics trong Settings.`);
@@ -142,7 +147,7 @@ export const PomodoroProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         clearInterval(interval);
         onSessionFinished();
       } else {
-        setTimer((prev) => ({ ...prev, remainingSec: remaining }));
+        setTimer((prev) => (prev.remainingSec === remaining ? prev : { ...prev, remainingSec: remaining }));
       }
     }, 500);
     return () => clearInterval(interval);
@@ -259,7 +264,7 @@ export const PomodoroProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const syncId = setInterval(() => {
       callAppTool<AppSnapshot>('pomodoro_get_state')
         .then((snap) => {
-          if (snap?.timer) setTimer(snap.timer);
+          if (snap?.timer) applyTimerSnapshot(snap.timer);
           if (snap?.summary) setSummary(snap.summary);
           if (snap?.tasks) setTasks(snap.tasks);
         })
