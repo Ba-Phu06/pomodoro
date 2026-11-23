@@ -1,0 +1,25 @@
+{
+  "name": "pomodoro",
+  "displayName": "Pomodoro Focus",
+  "version": "1.1.0",
+  "description": "Interactive Pomodoro timer, task manager with Google Calendar (.ics) sync, and focus productivity analytics MCP App for Antigravity.",
+  "logo": "assets/logo.svg",
+  "suggestedPrompts": [
+    "Open Pomodoro timer to start a 25-minute focus session",
+    "Show my focus hours and productivity summary for this week",
+    "Add a task to my Pomodoro list and start focusing"
+  ],
+  "author": {
+    "name": "Ba-Phu06"
+  },
+  "keywords": [
+    "pomodoro",
+    "focus",
+    "timer",
+    "productivity",
+    "tasks",
+    "analytics",
+    "google-calendar",
+    "ics"
+  ]
+}

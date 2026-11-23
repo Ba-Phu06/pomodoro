@@ -1,0 +1,32 @@
+{
+  "name": "pomodoro-mcp-app",
+  "version": "1.0.0",
+  "description": "Antigravity Pomodoro Focus MCP App Plugin",
+  "type": "module",
+  "scripts": {
+    "build:ui": "vite build --config ui/vite.config.ts",
+    "build:server": "esbuild server/index.ts --bundle --platform=node --format=cjs --outfile=dist/server.cjs && node -e \"const fs=require('fs');fs.copyFileSync('server/mini-pill.ps1','dist/mini-pill.ps1');fs.copyFileSync('server/notify-popup.ps1','dist/notify-popup.ps1');\"",
+    "build": "npm run build:ui && npm run build:server",
+    "package": "npm run build && node scripts/package-plugin.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test tests/server.test.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/ext-apps": "^1.7.5",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "lucide-react": "^0.475.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.7.3",
+    "vite": "^6.1.0",
+    "vite-plugin-singlefile": "^2.1.0"
+  }
+}

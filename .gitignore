@@ -1,0 +1,12 @@
+node_modules/
+Mẫu/
+release/
+.env
+.env.*
+*.log
+pomodoro-data.json
+*.ics
+*.pid
+*.tmp
+.DS_Store
+Thumbs.db
